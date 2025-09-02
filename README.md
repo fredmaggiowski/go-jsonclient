@@ -5,13 +5,13 @@
 [![Build Status][github-actions-svg]][github-actions]
 [![Go Report Card][go-report-card]][go-report-card-link]
 [![GoDoc][godoc-svg]][godoc-link]
+[![Coverage Status][coveralls-svg]][coveralls-link]
 
 </div>
 
 Go Json Client simplify the http request in json.
 
 It uses `net/http` core package as http client.
-
 
 ## Install
 
@@ -31,7 +31,7 @@ authentication headers:
 ```go
 func handleRequest () {
   opts := jsonclient.Options{
-    BaseURL: apiURL,
+    BaseURL: "http://base-url:8080/api/url/",
     Headers: jsonclient.Headers{
       "some":  "header",
       "other": "value",
@@ -68,6 +68,19 @@ func handleRequest () {
 }
 ```
 
+The library also check the status code of the request. If status code si not 2xx, it will return an `HTTPError`.
+
+## API
+
+### Accepted client options
+
+In the `New` function, it is possible to add some options. None of the following options are required.
+
+* **BaseURL**: set the base url. BaseURL must be absolute and starts with `http` or `https` scheme. It must end with a trailing slash `/`. Example of valid BaseUrl: `"http://base-url:8080/api/url/"`
+* **Headers**: a map of headers to add to all the requests. For example, it could be useful when it is required an auth header.
+* **HTTPClient** (default to `http.DefaultClient`): an http client to use instead of the default http client. It could be useful for example for testing purpose.
+* **Host**: set the host in all client requests.
+
 ## Versioning
 
 We use [SemVer][semver] for versioning. For the versions available,
@@ -80,3 +93,5 @@ see the [tags on this repository](https://github.com/davidebianchi/go-jsonclient
 [go-report-card]: https://goreportcard.com/badge/github.com/davidebianchi/go-jsonclient
 [go-report-card-link]: https://goreportcard.com/report/github.com/davidebianchi/go-jsonclient
 [semver]: https://semver.org/
+[coveralls-svg]: https://coveralls.io/repos/github/davidebianchi/go-jsonclient/badge.svg?branch=master
+[coveralls-link]: https://coveralls.io/github/davidebianchi/go-jsonclient?branch=master

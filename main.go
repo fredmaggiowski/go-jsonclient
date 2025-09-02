@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 // Headers map. A key/value map of headers
@@ -19,20 +18,28 @@ type Headers map[string]string
 type Client struct {
 	BaseURL        *url.URL
 	DefaultHeaders Headers
+	Host           string
 
 	client *http.Client
 }
 
 // Options to pass to create a new client
 type Options struct {
-	BaseURL string
-	Headers Headers
+	BaseURL    string
+	Headers    Headers
+	HTTPClient *http.Client
+	Host       string
 }
 
 // New function create a client using passed options
 // BaseURL must be an HTTP or HTTPs absolute url and have a trailing slash
 func New(opts Options) (*Client, error) {
-	baseURL, err := url.Parse(opts.BaseURL)
+	baseUrlToParse, err := url.JoinPath(opts.BaseURL, "/")
+	if err != nil {
+		return nil, err
+	}
+
+	baseURL, err := url.Parse(baseUrlToParse)
 	if err != nil {
 		return nil, err
 	}
@@ -45,11 +52,6 @@ func New(opts Options) (*Client, error) {
 		if scheme != "http" && scheme != "https" {
 			return nil, fmt.Errorf("unsupported scheme: %s", scheme)
 		}
-
-		path := baseURL.Path
-		if !strings.HasSuffix(path, "/") {
-			return nil, fmt.Errorf("BaseURL must end with a trailing slash")
-		}
 	}
 
 	client := &Client{
@@ -61,6 +63,12 @@ func New(opts Options) (*Client, error) {
 
 	if opts.Headers != nil {
 		client.DefaultHeaders = opts.Headers
+	}
+	if opts.HTTPClient != nil {
+		client.client = opts.HTTPClient
+	}
+	if opts.Host != "" {
+		client.Host = opts.Host
 	}
 
 	return client, nil
@@ -114,6 +122,9 @@ func (c *Client) NewRequestWithContext(ctx context.Context, method string, urlSt
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.Host != "" {
+		req.Host = c.Host
 	}
 
 	return req, nil

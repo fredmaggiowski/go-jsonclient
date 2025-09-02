@@ -24,7 +24,7 @@ var baseURL = &url.URL{
 	Scheme: "https",
 }
 
-func TestGetClient(t *testing.T) {
+func TestNewClient(t *testing.T) {
 	t.Run("correctly returns client", func(t *testing.T) {
 		opts := Options{BaseURL: apiURL}
 		client, err := New(opts)
@@ -43,10 +43,30 @@ func TestGetClient(t *testing.T) {
 		client, err := New(opts)
 		require.NoError(t, err, "create client error")
 		require.Exactly(t, client, &Client{
-			BaseURL:        &url.URL{},
+			BaseURL:        &url.URL{Path: "/"},
 			DefaultHeaders: Headers{},
 
 			client: http.DefaultClient,
+		})
+	})
+
+	t.Run("correctly returns client with custom headers and http client", func(t *testing.T) {
+		headers := map[string]string{"h1": "v1", "h2": "v2"}
+		customHTTPClient := &http.Client{
+			Timeout: 1234,
+		}
+
+		opts := Options{
+			Headers:    headers,
+			HTTPClient: customHTTPClient,
+		}
+		client, err := New(opts)
+		require.NoError(t, err, "create client error")
+		require.Exactly(t, client, &Client{
+			BaseURL:        &url.URL{Path: "/"},
+			DefaultHeaders: headers,
+
+			client: customHTTPClient,
 		})
 	})
 
@@ -80,14 +100,14 @@ func TestGetClient(t *testing.T) {
 		require.Nil(t, client, "client is not nil")
 	})
 
-	t.Run("throws if base url doesn't end with /", func(t *testing.T) {
+	t.Run("add trailing slash if base url doesn't end with /", func(t *testing.T) {
 		opts := Options{
 			BaseURL: strings.TrimSuffix(apiURL, "/"),
 		}
 		client, err := New(opts)
 
-		require.EqualError(t, err, "BaseURL must end with a trailing slash")
-		require.Nil(t, client, "client is not nil")
+		require.NoError(t, err)
+		require.Equal(t, apiURL, client.BaseURL.String())
 	})
 }
 
@@ -471,10 +491,43 @@ func TestDo(t *testing.T) {
 		require.NoError(t, err, "unexpected error reading response body")
 		require.Exactly(t, response, string(readBytes), "buffer copy fails")
 	})
+
+  t.Run("set host header in request", func(t *testing.T) {
+		var hostHeader string
+		setupServer := func(responseBody string, statusCode int) *httptest.Server {
+			return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				hostHeader = req.Host
+				w.WriteHeader(statusCode)
+				if responseBody != "" {
+					w.Write([]byte(responseBody))
+					return
+				}
+				w.Write(nil)
+			}))
+		}
+		s := setupServer(response, 200)
+		defer s.Close()
+
+		baseURL := fmt.Sprintf("%s/", s.URL)
+		opts := Options{
+			BaseURL: baseURL,
+			Host:    "my-host:3000",
+		}
+		client, err := New(opts)
+		require.NoError(t, err, "wrong client creation")
+
+		req, err := client.NewRequest(http.MethodGet, "", nil)
+		require.NoError(t, err, "wrong request creation")
+
+		v := Response{}
+		_, err = client.Do(req, &v)
+		require.NoError(t, err, "wrong request do")
+		require.Equal(t, "my-host:3000", hostHeader)
+	})
 }
 
 func TestIntegration(t *testing.T) {
-	setupServer := func(responseBody, expectedRequestBody string, statusCode int) *httptest.Server {
+	setupServer := func(responseBody, expectedRequestBody string, expectedHeaders map[string]string, statusCode int) *httptest.Server {
 		t.Helper()
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			defer req.Body.Close()
@@ -482,6 +535,12 @@ func TestIntegration(t *testing.T) {
 			if expectedRequestBody != "" {
 				bodyBytes, _ := ioutil.ReadAll(req.Body)
 				require.Equal(t, expectedRequestBody, strings.TrimSuffix(string(bodyBytes), "\n"))
+			}
+
+			if expectedHeaders != nil {
+				for k, v := range expectedHeaders {
+					require.Equal(t, v, req.Header.Get(k))
+				}
 			}
 
 			w.WriteHeader(statusCode)
@@ -498,7 +557,7 @@ func TestIntegration(t *testing.T) {
 		type Response struct {
 			Message string `json:"message"`
 		}
-		s := setupServer(fmt.Sprintf(`{"message": "%s"}`, expectedMessage), "", 200)
+		s := setupServer(fmt.Sprintf(`{"message": "%s"}`, expectedMessage), "", nil, 200)
 		opts := Options{
 			BaseURL: fmt.Sprintf("%s/api/", s.URL),
 		}
@@ -531,7 +590,7 @@ func TestIntegration(t *testing.T) {
 		expectedName := "my name"
 		expectedDescription := "my description"
 		expectedRequestBody := fmt.Sprintf(`{"name":"%s","description":"%s"}`, expectedName, expectedDescription)
-		s := setupServer(fmt.Sprintf(`{"id": "%s"}`, myID), expectedRequestBody, 200)
+		s := setupServer(fmt.Sprintf(`{"id": "%s"}`, myID), expectedRequestBody, nil, 200)
 		opts := Options{
 			BaseURL: fmt.Sprintf("%s/api/", s.URL),
 		}
@@ -553,4 +612,34 @@ func TestIntegration(t *testing.T) {
 		}, response)
 		require.Equal(t, 200, r.StatusCode, "wrong status code")
 	})
+
+	t.Run("with default headers", func(t *testing.T) {
+		expectedMessage := "my message"
+		type Response struct {
+			Message string `json:"message"`
+		}
+		h := map[string]string{
+			"foo": "bar",
+		}
+		s := setupServer(fmt.Sprintf(`{"message": "%s"}`, expectedMessage), "", h, 200)
+		opts := Options{
+			BaseURL: fmt.Sprintf("%s/api/", s.URL),
+			Headers: h,
+		}
+		client, err := New(opts)
+		require.NoError(t, err, "throws create client")
+
+		req, err := client.NewRequest(http.MethodGet, "/my-resource", nil)
+		require.NoError(t, err, "throws creating request")
+
+		response := Response{}
+		r, err := client.Do(req, &response)
+		require.NoError(t, err, "throws exec request")
+
+		require.Equal(t, Response{
+			Message: expectedMessage,
+		}, response)
+		require.Equal(t, 200, r.StatusCode, "wrong status code")
+	})
+
 }
